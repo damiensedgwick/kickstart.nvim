@@ -298,14 +298,16 @@ local function setup_lsp()
       },
     },
   })
-  vim.lsp.enable { 'ts_ls', 'pyright', 'lua_ls' }
+  -- SourceKit-LSP comes from the local Swift toolchain, not Mason.
+  vim.lsp.config('sourcekit', {})
+  vim.lsp.enable { 'ts_ls', 'pyright', 'lua_ls', 'sourcekit' }
 end
 
 -- Defer LSP setup until opening a filetype that actually benefits from it.
 vim.api.nvim_create_autocmd('FileType', {
   group = user_group,
   once = true,
-  pattern = { 'javascript', 'javascriptreact', 'lua', 'python', 'typescript', 'typescriptreact' },
+  pattern = { 'javascript', 'javascriptreact', 'lua', 'python', 'swift', 'typescript', 'typescriptreact' },
   callback = setup_lsp,
 })
 
@@ -392,13 +394,13 @@ require('lazy').setup({
         cwd_prompt = false,
         previewer = false,
         prompt = 'Files> ',
-        rg_opts = [[--color=never --files -g "!.git" -g "!.jj" -g "!node_modules" -g "!dist" -g "!.next" -g "!coverage"]],
+        rg_opts = [[--color=never --files -g "!.git" -g "!.jj" -g "!node_modules" -g "!dist" -g "!.next" -g "!coverage" -g "!.build" -g "!DerivedData"]],
       },
       grep = {
         hidden = true,
         prompt = 'Grep> ',
         input_prompt = 'Pattern> ',
-        rg_opts = [[--column --line-number --no-heading --color=always --smart-case --max-columns=4096 -g "!.git" -g "!node_modules" -g "!dist" -g "!.next" -g "!coverage" -e]],
+        rg_opts = [[--column --line-number --no-heading --color=always --smart-case --max-columns=4096 -g "!.git" -g "!node_modules" -g "!dist" -g "!.next" -g "!coverage" -g "!.build" -g "!DerivedData" -e]],
         winopts = { preview = { layout = 'vertical' } },
       },
       oldfiles = {
@@ -421,7 +423,11 @@ require('lazy').setup({
     event = { 'BufReadPost', 'BufNewFile' },
     main = 'nvim-treesitter',
     opts = {
-      ensure_install = {
+      install_dir = vim.fn.stdpath 'data' .. '/site',
+    },
+    config = function(_, opts)
+      local treesitter = require 'nvim-treesitter'
+      local languages = {
         'javascript',
         'typescript',
         'tsx',
@@ -430,14 +436,31 @@ require('lazy').setup({
         'css',
         'python',
         'lua',
+        'swift',
         'bash',
         'markdown',
         'yaml',
         'toml',
-      },
-    },
+      }
+
+      treesitter.setup(opts)
+
+      local installed = treesitter.get_installed()
+      local missing = vim.tbl_filter(function(lang)
+        return not vim.list_contains(installed, lang)
+      end, languages)
+
+      if #missing > 0 then
+        treesitter.install(missing)
+      end
+    end,
   },
 
+  -- LSP config definitions and Mason-installed servers
+  {
+    'neovim/nvim-lspconfig',
+    event = { 'BufReadPre', 'BufNewFile' },
+  },
   -- Mason (LSP server installer)
   {
     'williamboman/mason.nvim',
@@ -447,7 +470,7 @@ require('lazy').setup({
   {
     'williamboman/mason-lspconfig.nvim',
     event = 'VeryLazy',
-    dependencies = { 'williamboman/mason.nvim' },
+    dependencies = { 'williamboman/mason.nvim', 'neovim/nvim-lspconfig' },
     opts = {
       ensure_installed = { 'ts_ls', 'pyright', 'lua_ls' },
     },
@@ -518,6 +541,10 @@ require('lazy').setup({
           'prettierd',
           'prettier',
           stop_after_first = true,
+        },
+        swift = {
+          'swiftlint',
+          'swiftformat',
         },
         python = { 'ruff_format' },
         lua = { 'stylua' },

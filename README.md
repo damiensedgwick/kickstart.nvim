@@ -43,7 +43,7 @@ When you run `nvim .`, the config changes into that directory and shows a lightw
 - `fzf-lua` for file search, grep, buffers, recent files, help tags, and symbols
 - lightweight custom dashboard instead of a start screen plugin
 - `catppuccin` with automatic system light/dark switching
-- deferred built-in LSP setup for Lua, Python, JavaScript, and TypeScript
+- deferred built-in LSP setup for Lua, Python, JavaScript, TypeScript, and Swift
 - `blink.cmp` for completion
 - `conform.nvim` for format-on-save
 - Treesitter grammar management via `nvim-treesitter`
@@ -57,6 +57,7 @@ Configured formatters:
 
 - JavaScript / TypeScript / JSX / TSX / JSON / CSS: `biome`, then `prettierd`, then `prettier`
 - HTML: `prettierd`, then `prettier`
+- Swift / SwiftUI: `swiftlint`, then `swiftformat`
 - Python: `ruff_format`
 - Lua: `stylua`
 
@@ -64,4 +65,5 @@ Configured formatters:
 
 - this config assumes modern Neovim and leans on the built-in Lua LSP APIs
 - external tools such as `git`, `rg`, and language formatters should be installed on the machine
+- Swift support expects `sourcekit-lsp` and `swift` from the local Xcode / Swift toolchain rather than Mason
 - the repo is intentionally small and easy to read; most behavior is in one file on purpose
