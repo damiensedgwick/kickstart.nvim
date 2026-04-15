@@ -1,5 +1,8 @@
 -- init.lua - minimal, fast neovim config
 
+vim.g.loaded_netrw = 1
+vim.g.loaded_netrwPlugin = 1
+
 -- Bootstrap lazy.nvim
 local lazypath = vim.fn.stdpath 'data' .. '/lazy/lazy.nvim'
 if not vim.uv.fs_stat(lazypath) then
@@ -40,6 +43,8 @@ o.shiftwidth = 2
 o.expandtab = true
 o.wrap = false
 o.showmode = false
+o.shortmess:append 'I'
+o.fillchars:append { eob = ' ' }
 
 -- Keymaps
 local map = vim.keymap.set
@@ -57,6 +62,171 @@ map('v', 'K', ":m '<-2<CR>gv=gv")
 map('n', '<leader>?', function() require('which-key').show() end, { desc = 'Show keymaps' })
 
 local user_group = vim.api.nvim_create_augroup('user_config', { clear = true })
+
+local function is_directory(path)
+  local stat = path ~= '' and vim.uv.fs_stat(path) or nil
+  return stat and stat.type == 'directory'
+end
+
+local function is_blank_buffer(buf)
+  if not vim.api.nvim_buf_is_valid(buf) then
+    return false
+  end
+
+  if vim.api.nvim_buf_get_name(buf) ~= '' or vim.bo[buf].buftype ~= '' or vim.bo[buf].modified then
+    return false
+  end
+
+  local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+  return #lines == 1 and lines[1] == ''
+end
+
+local function center_line(text, width)
+  local padding = math.max(0, math.floor((width - vim.fn.strdisplaywidth(text)) / 2))
+  return string.rep(' ', padding) .. text, padding
+end
+
+local function render_dashboard(buf)
+  if not is_blank_buffer(buf) then
+    return
+  end
+
+  local win = vim.api.nvim_get_current_win()
+  local width = vim.api.nvim_win_get_width(win)
+  local height = vim.api.nvim_win_get_height(win)
+  local cwd = vim.fn.fnamemodify(vim.fn.getcwd(), ':~')
+  local entries = {
+    { text = 'NEOVIM', hl = 'Title' },
+    { text = '' },
+    { text = 'Fast search, small edits, format on save.', hl = 'Comment' },
+    { text = 'cwd: ' .. cwd, hl = 'Comment' },
+    { text = '' },
+    { text = 'f  find files', key = 'f' },
+    { text = 'g  live grep', key = 'g' },
+    { text = 'r  recent files', key = 'r' },
+    { text = 'b  buffers', key = 'b' },
+    { text = 'n  new empty buffer', key = 'n' },
+    { text = '?  keymaps', key = '?' },
+    { text = 'q  quit', key = 'q' },
+    { text = '' },
+    { text = '<leader>f and <leader>g work anywhere.', hl = 'Comment' },
+  }
+
+  local saved_window_options = {
+    cursorline = vim.wo[win].cursorline,
+    list = vim.wo[win].list,
+    number = vim.wo[win].number,
+    relativenumber = vim.wo[win].relativenumber,
+    signcolumn = vim.wo[win].signcolumn,
+  }
+
+  local lines = {}
+  local highlights = {}
+  local top_padding = math.max(0, math.floor((height - #entries) / 2) - 1)
+  for _ = 1, top_padding do
+    table.insert(lines, '')
+  end
+
+  for index, entry in ipairs(entries) do
+    local line, padding = center_line(entry.text, width)
+    local line_number = #lines
+    lines[line_number + 1] = line
+
+    if entry.hl and entry.text ~= '' then
+      table.insert(highlights, {
+        group = entry.hl,
+        line = line_number,
+        start_col = padding,
+        end_col = padding + #entry.text,
+      })
+    end
+
+    if entry.key then
+      table.insert(highlights, {
+        group = 'Keyword',
+        line = line_number,
+        start_col = padding,
+        end_col = padding + #entry.key,
+      })
+    end
+  end
+
+  vim.bo[buf].bufhidden = 'wipe'
+  vim.bo[buf].buflisted = false
+  vim.bo[buf].buftype = 'nofile'
+  vim.bo[buf].filetype = 'starter'
+  vim.bo[buf].swapfile = false
+  vim.bo[buf].modifiable = true
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+  vim.bo[buf].modifiable = false
+  vim.bo[buf].modified = false
+
+  for _, highlight in ipairs(highlights) do
+    vim.api.nvim_buf_add_highlight(
+      buf,
+      -1,
+      highlight.group,
+      highlight.line,
+      highlight.start_col,
+      highlight.end_col
+    )
+  end
+
+  vim.wo[win].cursorline = false
+  vim.wo[win].list = false
+  vim.wo[win].number = false
+  vim.wo[win].relativenumber = false
+  vim.wo[win].signcolumn = 'no'
+  vim.api.nvim_win_set_cursor(win, { 1, 0 })
+
+  vim.api.nvim_create_autocmd('BufLeave', {
+    group = user_group,
+    buffer = buf,
+    once = true,
+    callback = function()
+      if not vim.api.nvim_win_is_valid(win) then
+        return
+      end
+
+      for option, value in pairs(saved_window_options) do
+        vim.wo[win][option] = value
+      end
+    end,
+  })
+
+  local dashboard_opts = { buffer = buf, nowait = true, silent = true }
+  map('n', 'f', '<cmd>FzfLua files<CR>', dashboard_opts)
+  map('n', 'g', '<cmd>FzfLua live_grep<CR>', dashboard_opts)
+  map('n', 'r', '<cmd>FzfLua oldfiles<CR>', dashboard_opts)
+  map('n', 'b', '<cmd>FzfLua buffers<CR>', dashboard_opts)
+  map('n', '?', function() require('which-key').show() end, dashboard_opts)
+  map('n', 'n', '<cmd>enew<CR>', dashboard_opts)
+  map('n', 'q', '<cmd>quit<CR>', dashboard_opts)
+end
+
+-- Treat directory edits as "start in this cwd" rather than opening an explorer.
+vim.api.nvim_create_autocmd('BufEnter', {
+  group = user_group,
+  nested = true,
+  callback = function(data)
+    local directory = vim.api.nvim_buf_get_name(data.buf)
+    if not is_directory(directory) then
+      return
+    end
+
+    vim.cmd.cd(vim.fn.fnamemodify(directory, ':p'))
+    vim.cmd.enew()
+    pcall(vim.api.nvim_buf_delete, data.buf, { force = true })
+  end,
+})
+
+vim.api.nvim_create_autocmd('VimEnter', {
+  group = user_group,
+  nested = true,
+  callback = function()
+    render_dashboard(vim.api.nvim_get_current_buf())
+  end,
+})
 
 local function apply_colorscheme(background)
   vim.o.background = background
@@ -289,30 +459,6 @@ require('lazy').setup({
       },
     },
   },
-
-  -- Directory explorer
-  {
-    'stevearc/oil.nvim',
-    lazy = false,
-    keys = {
-      { '-', '<cmd>Oil<CR>', desc = 'Browse parent directory' },
-      { '<leader>e', '<cmd>Oil<CR>', desc = 'Browse current file' },
-      {
-        '<leader>E',
-        function() require('oil').open(vim.fn.getcwd()) end,
-        desc = 'Browse cwd',
-      },
-    },
-    opts = {
-      default_file_explorer = true,
-      columns = {},
-      view_options = {
-        show_hidden = true,
-        natural_order = 'fast',
-      },
-    },
-  },
-
   -- Keymap hints popup
   {
     'folke/which-key.nvim',
