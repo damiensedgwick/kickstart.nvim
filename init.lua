@@ -17,8 +17,6 @@ vim.opt.rtp:prepend(lazypath)
 -- Options
 vim.g.mapleader = ' '
 vim.g.maplocalleader = ' '
-vim.g.loaded_netrw = 1
-vim.g.loaded_netrwPlugin = 1
 
 local o = vim.opt
 o.number = true
@@ -58,21 +56,38 @@ map('v', 'K', ":m '<-2<CR>gv=gv")
 
 map('n', '<leader>?', function() require('which-key').show() end, { desc = 'Show keymaps' })
 
--- LSP (native vim.lsp.config, nvim 0.11+)
-vim.lsp.config('ts_ls', {})
-vim.lsp.config('pyright', {})
-vim.lsp.config('lua_ls', {
-  settings = {
-    Lua = {
-      diagnostics = { globals = { 'vim' } },
-      workspace = { checkThirdParty = false },
+local user_group = vim.api.nvim_create_augroup('user_config', { clear = true })
+
+local function apply_colorscheme(background)
+  vim.o.background = background
+  vim.cmd.colorscheme 'catppuccin'
+end
+
+local function setup_lsp()
+  vim.lsp.config('ts_ls', {})
+  vim.lsp.config('pyright', {})
+  vim.lsp.config('lua_ls', {
+    settings = {
+      Lua = {
+        diagnostics = { globals = { 'vim' } },
+        workspace = { checkThirdParty = false },
+      },
     },
-  },
+  })
+  vim.lsp.enable { 'ts_ls', 'pyright', 'lua_ls' }
+end
+
+-- Defer LSP setup until opening a filetype that actually benefits from it.
+vim.api.nvim_create_autocmd('FileType', {
+  group = user_group,
+  once = true,
+  pattern = { 'javascript', 'javascriptreact', 'lua', 'python', 'typescript', 'typescriptreact' },
+  callback = setup_lsp,
 })
-vim.lsp.enable { 'ts_ls', 'pyright', 'lua_ls' }
 
 -- LSP keymaps on attach
 vim.api.nvim_create_autocmd('LspAttach', {
+  group = user_group,
   callback = function(ev)
     local b = ev.buf
     map('n', 'gd', vim.lsp.buf.definition, { buffer = b, desc = 'Go to definition' })
@@ -85,16 +100,6 @@ vim.api.nvim_create_autocmd('LspAttach', {
   end,
 })
 
--- Detect system dark/light preference (macOS / Linux)
-local function is_dark_mode()
-  if vim.fn.has 'mac' == 1 then
-    local result = vim.fn.system 'defaults read -g AppleInterfaceStyle 2>/dev/null'
-    return result:match 'Dark' ~= nil
-  end
-  local result = vim.fn.system 'gsettings get org.gnome.desktop.interface color-scheme 2>/dev/null'
-  return not result:match 'light'
-end
-
 -- Plugins
 require('lazy').setup({
   defaults = { lazy = true },
@@ -104,7 +109,6 @@ require('lazy').setup({
         'gzip',
         'matchit',
         'matchparen',
-        'netrwPlugin',
         'tarPlugin',
         'tohtml',
         'tutor',
@@ -125,9 +129,19 @@ require('lazy').setup({
     },
     config = function(_, opts)
       require('catppuccin').setup(opts)
-      vim.o.background = is_dark_mode() and 'dark' or 'light'
-      vim.cmd.colorscheme 'catppuccin'
+      apply_colorscheme(vim.o.background == 'light' and 'light' or 'dark')
     end,
+  },
+  {
+    'f-person/auto-dark-mode.nvim',
+    lazy = false,
+    priority = 900,
+    opts = {
+      fallback = 'dark',
+      update_interval = 5000,
+      set_dark_mode = function() apply_colorscheme 'dark' end,
+      set_light_mode = function() apply_colorscheme 'light' end,
+    },
   },
 
   -- Fuzzy finder
@@ -180,7 +194,7 @@ require('lazy').setup({
   },
   {
     'williamboman/mason-lspconfig.nvim',
-    event = { 'BufReadPost', 'BufNewFile' },
+    event = 'VeryLazy',
     dependencies = { 'williamboman/mason.nvim' },
     opts = {
       ensure_installed = { 'ts_ls', 'pyright', 'lua_ls' },
@@ -276,24 +290,26 @@ require('lazy').setup({
     },
   },
 
-  -- File explorer (replaces netrw)
+  -- Directory explorer
   {
-    'echasnovski/mini.files',
+    'stevearc/oil.nvim',
+    lazy = false,
     keys = {
-      {
-        '<leader>e',
-        function() require('mini.files').open(vim.api.nvim_buf_get_name(0)) end,
-        desc = 'File explorer (current file)',
-      },
+      { '-', '<cmd>Oil<CR>', desc = 'Browse parent directory' },
+      { '<leader>e', '<cmd>Oil<CR>', desc = 'Browse current file' },
       {
         '<leader>E',
-        function() require('mini.files').open() end,
-        desc = 'File explorer (cwd)',
+        function() require('oil').open(vim.fn.getcwd()) end,
+        desc = 'Browse cwd',
       },
     },
     opts = {
-      mappings = { go_in_plus = '<CR>' },
-      windows = { preview = true, width_preview = 40 },
+      default_file_explorer = true,
+      columns = {},
+      view_options = {
+        show_hidden = true,
+        natural_order = 'fast',
+      },
     },
   },
 
