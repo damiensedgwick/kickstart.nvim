@@ -68,6 +68,32 @@ local function is_directory(path)
   return stat and stat.type == 'directory'
 end
 
+local function project_root()
+  local current = vim.api.nvim_buf_get_name(0)
+  local start = current ~= '' and vim.fs.dirname(current) or vim.fn.getcwd()
+  local git_dir = vim.fs.find('.git', { path = start, upward = true })[1]
+  return git_dir and vim.fs.dirname(git_dir) or vim.fn.getcwd()
+end
+
+local function open_project_files()
+  require('fzf-lua').files { cwd = project_root() }
+end
+
+local function open_project_grep()
+  require('fzf-lua').live_grep { cwd = project_root() }
+end
+
+local function open_project_recent()
+  require('fzf-lua').oldfiles {
+    cwd = project_root(),
+    cwd_only = true,
+  }
+end
+
+local function open_buffer_grep()
+  require('fzf-lua').grep_curbuf()
+end
+
 local function is_blank_buffer(buf)
   if not vim.api.nvim_buf_is_valid(buf) then
     return false
@@ -86,6 +112,11 @@ local function center_line(text, width)
   return string.rep(' ', padding) .. text, padding
 end
 
+local function left_align_block_line(text, width, block_width)
+  local padding = math.max(0, math.floor((width - block_width) / 2))
+  return string.rep(' ', padding) .. text, padding
+end
+
 local function render_dashboard(buf)
   if not is_blank_buffer(buf) then
     return
@@ -94,22 +125,25 @@ local function render_dashboard(buf)
   local win = vim.api.nvim_get_current_win()
   local width = vim.api.nvim_win_get_width(win)
   local height = vim.api.nvim_win_get_height(win)
-  local cwd = vim.fn.fnamemodify(vim.fn.getcwd(), ':~')
+  local root = project_root()
+  local project_name = vim.fn.fnamemodify(root, ':t')
+  local project_path = vim.fn.fnamemodify(root, ':~')
   local entries = {
-    { text = 'NEOVIM', hl = 'Title' },
+    { text = project_name ~= '' and project_name or 'neovim', hl = 'Title' },
     { text = '' },
-    { text = 'Fast search, small edits, format on save.', hl = 'Comment' },
-    { text = 'cwd: ' .. cwd, hl = 'Comment' },
+    { text = project_path, hl = 'Comment' },
+    { text = 'search first, edit fast', hl = 'Comment' },
     { text = '' },
-    { text = 'f  find files', key = 'f' },
-    { text = 'g  live grep', key = 'g' },
-    { text = 'r  recent files', key = 'r' },
-    { text = 'b  buffers', key = 'b' },
-    { text = 'n  new empty buffer', key = 'n' },
-    { text = '?  keymaps', key = '?' },
-    { text = 'q  quit', key = 'q' },
+    { text = 'f  project files', align = 'left', key = 'f' },
+    { text = 'g  project grep', align = 'left', key = 'g' },
+    { text = '/  buffer grep', align = 'left', key = '/' },
+    { text = 'r  recent files', align = 'left', key = 'r' },
+    { text = 'b  open buffers', align = 'left', key = 'b' },
+    { text = 'n  scratch buffer', align = 'left', key = 'n' },
+    { text = '?  keymaps', align = 'left', key = '?' },
+    { text = 'q  quit', align = 'left', key = 'q' },
     { text = '' },
-    { text = '<leader>f and <leader>g work anywhere.', hl = 'Comment' },
+    { text = '<leader><space> files  <leader>g grep  <leader>/ buffer grep', hl = 'Comment' },
   }
 
   local saved_window_options = {
@@ -122,13 +156,26 @@ local function render_dashboard(buf)
 
   local lines = {}
   local highlights = {}
+  local command_block_width = 0
+  for _, entry in ipairs(entries) do
+    if entry.align == 'left' then
+      command_block_width = math.max(command_block_width, vim.fn.strdisplaywidth(entry.text))
+    end
+  end
+
   local top_padding = math.max(0, math.floor((height - #entries) / 2) - 1)
   for _ = 1, top_padding do
     table.insert(lines, '')
   end
 
   for index, entry in ipairs(entries) do
-    local line, padding = center_line(entry.text, width)
+    local line, padding
+    if entry.align == 'left' then
+      line, padding = left_align_block_line(entry.text, width, command_block_width)
+    else
+      line, padding = center_line(entry.text, width)
+    end
+
     local line_number = #lines
     lines[line_number + 1] = line
 
@@ -195,10 +242,11 @@ local function render_dashboard(buf)
   })
 
   local dashboard_opts = { buffer = buf, nowait = true, silent = true }
-  map('n', 'f', '<cmd>FzfLua files<CR>', dashboard_opts)
-  map('n', 'g', '<cmd>FzfLua live_grep<CR>', dashboard_opts)
-  map('n', 'r', '<cmd>FzfLua oldfiles<CR>', dashboard_opts)
-  map('n', 'b', '<cmd>FzfLua buffers<CR>', dashboard_opts)
+  map('n', 'f', open_project_files, dashboard_opts)
+  map('n', 'g', open_project_grep, dashboard_opts)
+  map('n', '/', open_buffer_grep, dashboard_opts)
+  map('n', 'r', open_project_recent, dashboard_opts)
+  map('n', 'b', function() require('fzf-lua').buffers() end, dashboard_opts)
   map('n', '?', function() require('which-key').show() end, dashboard_opts)
   map('n', 'n', '<cmd>enew<CR>', dashboard_opts)
   map('n', 'q', '<cmd>quit<CR>', dashboard_opts)
@@ -216,7 +264,13 @@ vim.api.nvim_create_autocmd('BufEnter', {
 
     vim.cmd.cd(vim.fn.fnamemodify(directory, ':p'))
     vim.cmd.enew()
+    local dashboard_buf = vim.api.nvim_get_current_buf()
     pcall(vim.api.nvim_buf_delete, data.buf, { force = true })
+    vim.schedule(function()
+      if vim.api.nvim_buf_is_valid(dashboard_buf) then
+        render_dashboard(dashboard_buf)
+      end
+    end)
   end,
 })
 
@@ -319,16 +373,44 @@ require('lazy').setup({
     'ibhagwan/fzf-lua',
     cmd = 'FzfLua',
     keys = {
-      { '<leader>f', '<cmd>FzfLua files<CR>', desc = 'Find files' },
-      { '<leader>g', '<cmd>FzfLua live_grep<CR>', desc = 'Live grep' },
-      { '<leader>b', '<cmd>FzfLua buffers<CR>', desc = 'Buffers' },
-      { '<leader>h', '<cmd>FzfLua help_tags<CR>', desc = 'Help tags' },
-      { '<leader>r', '<cmd>FzfLua oldfiles<CR>', desc = 'Recent files' },
-      { '<leader>s', '<cmd>FzfLua lsp_document_symbols<CR>', desc = 'Symbols' },
+      { '<leader><space>', open_project_files, desc = 'Project files' },
+      { '<leader>f', open_project_files, desc = 'Project files' },
+      { '<leader>g', open_project_grep, desc = 'Project grep' },
+      { '<leader>/', open_buffer_grep, desc = 'Buffer grep' },
+      { '<leader>b', function() require('fzf-lua').buffers() end, desc = 'Buffers' },
+      { '<leader>h', function() require('fzf-lua').help_tags() end, desc = 'Help tags' },
+      { '<leader>r', open_project_recent, desc = 'Recent files' },
+      { '<leader>s', function() require('fzf-lua').lsp_document_symbols() end, desc = 'Symbols' },
     },
     opts = {
       'default-title',
-      winopts = { preview = { layout = 'vertical' } },
+      winopts = {
+        height = 0.85,
+        width = 0.80,
+      },
+      files = {
+        cwd_prompt = false,
+        previewer = false,
+        prompt = 'Files> ',
+        rg_opts = [[--color=never --files -g "!.git" -g "!.jj" -g "!node_modules" -g "!dist" -g "!.next" -g "!coverage"]],
+      },
+      grep = {
+        hidden = true,
+        prompt = 'Grep> ',
+        input_prompt = 'Pattern> ',
+        rg_opts = [[--column --line-number --no-heading --color=always --smart-case --max-columns=4096 -g "!.git" -g "!node_modules" -g "!dist" -g "!.next" -g "!coverage" -e]],
+        winopts = { preview = { layout = 'vertical' } },
+      },
+      oldfiles = {
+        cwd_only = true,
+        include_current_session = true,
+        previewer = false,
+        prompt = 'Recent> ',
+      },
+      buffers = {
+        previewer = false,
+        prompt = 'Buffers> ',
+      },
     },
   },
 
